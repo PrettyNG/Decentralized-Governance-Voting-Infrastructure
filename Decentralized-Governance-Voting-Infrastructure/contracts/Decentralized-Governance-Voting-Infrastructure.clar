@@ -431,3 +431,131 @@
     (ok true)
   )
 )
+
+;; Create treasury allocation proposal
+(define-public (create-treasury-proposal 
+  (title (string-utf8 100)) 
+  (description (string-utf8 500))
+  (duration uint)
+  (quorum-threshold uint)
+  (pass-threshold uint)
+  (recipient principal)
+  (amount uint)
+)
+  (let 
+    (
+      (proposal-id (var-get next-proposal-id))
+      (current-block stacks-block-height)
+      (user-token-balance (ft-get-balance governance-token tx-sender))
+    )
+    ;; Validation Checks
+    (asserts! (>= user-token-balance (var-get proposal-submission-min-tokens)) ERR-INSUFFICIENT-TOKENS)
+    (asserts! (<= amount (var-get treasury-max-per-proposal)) ERR-TREASURY-LIMIT-EXCEEDED)
+    (asserts! (<= amount (var-get treasury-balance)) ERR-TREASURY-LIMIT-EXCEEDED)
+    (asserts! (and (>= duration (var-get min-proposal-duration)) (<= duration (var-get max-proposal-duration))) ERR-INVALID-PROPOSAL)
+    
+    ;; Store Proposal
+    (map-set proposals 
+      {proposal-id: proposal-id}
+      {
+        title: title,
+        description: description,
+        proposed-by: tx-sender,
+        start-block: current-block,
+        end-block: (+ current-block duration),
+        proposal-type: (get TREASURY PROPOSAL-TYPES),
+        vote-for: u0,
+        vote-against: u0,
+        executed: false,
+        execution-result: none,
+        quorum-threshold: quorum-threshold,
+        pass-threshold: pass-threshold
+      }
+    )
+    
+    ;; Create Treasury Allocation
+    (map-set treasury-allocations
+      {allocation-id: (var-get next-allocation-id)}
+      {
+        proposal-id: proposal-id,
+        recipient: recipient,
+        amount: amount,
+        executed: false
+      }
+    )
+    
+    ;; Increment IDs
+    (var-set next-proposal-id (+ proposal-id u1))
+    (var-set next-allocation-id (+ (var-get next-allocation-id) u1))
+    
+    (ok proposal-id)
+  )
+)
+
+;; Execute treasury allocation
+(define-public (execute-treasury-allocation (allocation-id uint))
+  (let 
+    (
+      (allocation (unwrap! (map-get? treasury-allocations {allocation-id: allocation-id}) ERR-INVALID-PROPOSAL))
+      (proposal-id (get proposal-id allocation))
+      (proposal (unwrap! (map-get? proposals {proposal-id: proposal-id}) ERR-INVALID-PROPOSAL))
+    )
+    ;; Validation Checks
+    (asserts! (get executed proposal) ERR-UNAUTHORIZED)
+    (asserts! (is-some (get execution-result proposal)) ERR-UNAUTHORIZED)
+    (asserts! (unwrap-panic (get execution-result proposal)) ERR-UNAUTHORIZED)
+    (asserts! (not (get executed allocation)) ERR-UNAUTHORIZED)
+    
+    ;; Execute Treasury Transfer
+    (try! (as-contract (ft-transfer? governance-token 
+                                    (get amount allocation) 
+                                    tx-sender 
+                                    (get recipient allocation))))
+    
+    ;; Update Treasury Balance
+    (var-set treasury-balance (- (var-get treasury-balance) (get amount allocation)))
+    
+    ;; Update Allocation Status
+    (map-set treasury-allocations
+      {allocation-id: allocation-id}
+      (merge allocation {executed: true})
+    )
+    
+    (ok true)
+  )
+)
+
+;; Comprehensive governance parameter update
+(define-public (update-governance-parameters
+  (new-min-proposal-duration (optional uint))
+  (new-max-proposal-duration (optional uint))
+  (new-proposal-submission-min-tokens (optional uint))
+  (new-treasury-max-per-proposal (optional uint))
+)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+    
+    ;; Update parameters if provided
+    (if (is-some new-min-proposal-duration)
+      (var-set min-proposal-duration (unwrap-panic new-min-proposal-duration))
+      true
+    )
+    
+    (if (is-some new-max-proposal-duration)
+      (var-set max-proposal-duration (unwrap-panic new-max-proposal-duration))
+      true
+    )
+    
+    (if (is-some new-proposal-submission-min-tokens)
+      (var-set proposal-submission-min-tokens (unwrap-panic new-proposal-submission-min-tokens))
+      true
+    )
+    
+    (if (is-some new-treasury-max-per-proposal)
+      (var-set treasury-max-per-proposal (unwrap-panic new-treasury-max-per-proposal))
+      true
+    )
+    
+    (ok true)
+  )
+)
