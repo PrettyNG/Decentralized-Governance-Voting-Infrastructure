@@ -254,3 +254,62 @@
     )
   )
 )
+
+;; Get Proposal Details
+(define-read-only (get-proposal-details (proposal-id uint))
+  (map-get? proposals {proposal-id: proposal-id})
+)
+
+;; Get Voting Power
+(define-read-only (get-voting-power (voter principal))
+  (ft-get-balance governance-token voter)
+)
+
+;; Revoke Delegation
+(define-public (revoke-delegation)
+  (begin
+    (map-delete delegations tx-sender)
+    (ok true)
+  )
+)
+
+;; Admin Functions
+;; Upgrade Governance Parameters (Controlled by Contract Owner)
+(define-public (upgrade-governance-params 
+  (new-max-delegation-depth uint)
+)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+    ;; Future expansion for upgrading governance parameters
+    (ok true)
+  )
+)
+
+;; Emergency Pause Mechanism
+(define-public (toggle-contract-pause)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED)
+    (var-set contract-paused (not (var-get contract-paused)))
+    (ok (var-get contract-paused))
+  )
+)
+
+;; Advanced Governance Metrics
+(define-read-only (get-governance-metrics)
+  {
+    total-governance-tokens: (var-get total-governance-tokens),
+    total-proposals: (var-get next-proposal-id),
+    contract-paused: (var-get contract-paused)
+  }
+)
+
+;; Token Burning Mechanism (Optional)
+(define-public (burn-governance-tokens (amount uint))
+  (begin
+    (try! (ft-burn? governance-token amount tx-sender))
+    (var-set total-governance-tokens 
+      (- (var-get total-governance-tokens) amount)
+    )
+    (ok true)
+  )
+)
